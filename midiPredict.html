@@ -7,68 +7,94 @@
 
     <!-- see https://github.com/nfroidure/midifile -->
     <script src="https://unpkg.com/@tonejs/midi"></script>
-    
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@2.0.0/dist/tf.min.js"></script>
+
     <!-- <link rel="stylesheet" href="Paint.css"> -->
     <!-- <script src="midiPredict.js" ></script> -->
 </head>
 
+
 <!-- get input file -->
 <input type="file" id="input">
 <p id='fInfo'>No file selected</p>
-<img src="" height="200" alt="Image preview...">
+<a download="output.midi" id=outA><button id='outButton' disabled>Write MIDI to file</button></a>
 <script>
+    'use strict';
     //  console.log(Object.keys(selectedFile));
 
-const validExtensions = ['mid', 'midi']
-fInfo = document.getElementById('fInfo')
-const img = document.querySelector('img');
+    const validExtensions = ['mid', 'midi'];
 
-function fileReceived() {
-    const selectedFile = this.files[0];
-    if (validExtensions.indexOf(selectedFile.name.split('.').pop()) >= 0) {
-        
-        const reader = new FileReader();
-        reader.addEventListener("load", function () {
+    const fInfo = document.getElementById('fInfo');
+    const outButton = document.getElementById('outButton');
+    const outA = document.getElementById('outA');
+    let midi;
+    // outButton.addEventListener('click', _ => fs.writeFileSync("output.mid", new Buffer(midi.toArray())));
+    // outButton.addEventListener('click', _ => console.log(midi));
 
-            const midi = new Midi(reader.result);
-            
-            console.log(Object.keys(midi.tracks));
-            midi.tracks.forEach(track => {
-            //tracks have notes and controlChanges
-          
-                //notes are an array
-                const notes = track.notes;
+    const MIDIA0 = 22;
+    const SUBBEATS = 4;
+
+    function fileReceived() {
+        const selectedFile = this.files[0];
+        if (validExtensions.indexOf(selectedFile.name.split('.').pop()) >= 0) {
+            console.log('valid extension')
+            const reader = new FileReader();
+            reader.addEventListener('load', function () {
+                console.log('loading file')
+                // read file into new Midi object
+                midi = new Midi(reader.result);
+
+                let midiTrack = midi.tracks[0];
+
+                console.log(`midi keys: ${Object.keys(midi)}`);
+                console.log(`midi track keys: ${Object.keys(midiTrack)}`);
+                console.log(`midi header keys: ${Object.keys(midi.header)}`);
+
+                const notes = midi.tracks[0].notes;
+                let tempo = midi.header.tempos[0];
+                let beatLength = 60 / tempo;
+                let subBeatLength = beatLength / SUBBEATS;
+                let notesSubBeats = notes.map(note => Math.round(note.time / subBeatLength));
+
+                console.log(`tempo: ${Object.keys(tempo)}`);
+
+                // notes are an array
+                fInfo.innerHTML = '';
+                var modelInputs = {
+                    TBn: notes.map(note => { // note starts (beats)
+                        let noteSubBeat = note.time / subBeatLength;
+                        return Math.floor(noteSubBeat % (SUBBEATS * 4) / SUBBEATS)
+                    }),
+                    TSBn: notes.map(note => {  // note starts (sub-beats)
+                        let noteSubBeat = note.time / subBeatLength;
+                        return Math.floor(noteSubBeat % (SUBBEATS))
+                    }),
+                    PSn: notes.map(note => (note.midi - MIDIA0) / 88), // pitch cont.
+                    PCn: notes.map(note => (note.midi - MIDIA0)) % 12 // pitch class   
+                };
+                console.log(modelInputs)
                 notes.forEach(note => {
-                    fInfo.innerHTML = 'failed?';
-                    fInfo.innerHTML = note.name;
-                //note.midi, note.time, note.duration, note.name
+                    fInfo.innerHTML += ` ${note.time} ${note.midi}<br />`;
+                    //note.midi, note.time, note.duration, note.name
                 })
-            })
 
-        }, false);
+                let midiBlob = new Blob([midi.toArray()], { type: "octet/stream" })
+                const midiURL = URL.createObjectURL(midiBlob)
+                outA.setAttribute('href', midiURL)
+                document.getElementById('outButton').removeAttribute('disabled');
 
-        midiBin = reader.readAsArrayBuffer(selectedFile);
-        
-        // midiBin = reader.readAsBinaryString(selectedFile).result;
-        // const midi = new Midi(midiBin);
-        fInfo.innerHTML = 'failed?';
+            }, false);
 
+            let midiBin = reader.readAsArrayBuffer(selectedFile);
 
+            // midiBin = reader.readAsBinaryString(selectedFile).result;
+            // const midi = new Midi(midiBin);
 
-    } else {
-        alert(`The file extension ${selectedFile.name.split('.').pop()} is invalid, must be in ${validExtensions}`);
-        // for invalid file, try and load it as an image
-        const reader = new FileReader();
-        reader.addEventListener("load", function () {
-            img.src = reader.result
-
-        }, false);
-        midiURL = reader.readAsDataURL(selectedFile);
+        } else {
+            alert(`The file extension ${selectedFile.name.split('.').pop()} is invalid, must be in ${validExtensions}`);
+        }
     }
-}
 
-const inputElement = document.getElementById("input");
-inputElement.addEventListener("change", fileReceived, false);
+    const inputElement = document.getElementById("input");
+    inputElement.addEventListener("change", fileReceived, false);
 </script>
-
-
