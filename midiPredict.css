@@ -1,0 +1,178 @@
+/* Containers */
+
+/* necessary so that 100vh doesn't overfly (default is 8px) */
+body {
+    margin: 0;
+}
+
+#app-container {
+    display              : grid;
+    grid-template-columns: 3fr 9fr;
+    gap                  : 1rem;
+    margin               : 0;
+    padding              : 1%;
+    box-sizing           : border-box;
+    height               : 100vh;
+}
+
+#controls-container {
+    display        : flex;
+    flex-direction : column;
+    justify-content: start;
+    align-items    : stretch;
+    border-radius  : 1rem;
+    border         : 1px solid #ccc;
+    padding        : 1rem 1rem;
+}
+
+#notes-container {
+    display              : grid;
+    grid-column          : 2;
+    grid-template-columns: repeat(64, 1fr);
+    grid-template-rows   : repeat(88, 1fr);
+    grid-auto-flow       : column;
+    gap                  : 0.1fr;
+    border-radius        : 1rem;
+    border               : 1px solid #ccc;
+    padding              : 1%;
+
+}
+
+
+/* Controls */
+
+.hidden-input[type="file"] {
+    position: absolute;
+    left    : -99999rem
+}
+
+#controls-container>* {
+    margin: 0.5rem 0rem;
+}
+
+#file-info {
+    border-radius   : 1rem;
+    background-color: white;
+}
+
+.control-buttons {
+    border-radius   : 1rem;
+    border          : 3px solid #ccc;
+    cursor          : pointer;
+    /* flex-grow       : .4; */
+    height          : 2rem;
+    color: black;
+    /* seems that content-box is too big, border-box takes into account padding? */
+    /* box-sizing   : border-box; */
+    /* margins of adjacent elements will overlap */
+}
+
+
+.controls-heading {
+    font-size  : 130%;
+    font-weight: bold;
+    /* text-align: center; */
+
+}
+
+#file-out-anchor, control-buttons, control-buttons>* {
+    text-decoration: none;
+    color: black;
+}
+
+
+/* Notes */
+
+.note-box {
+    /* margin         : 5%; */
+    padding: 5%;
+    /* background implicitly sets background-clip... */
+    background     : rgba(0, 255, 0, 0);
+    background-clip: content-box;
+    border-left: 0.15vw solid rgb(255, 255, 255);
+}
+
+
+.note-box-beat-start {
+    border-left: 0.15vw solid rgba(0, 0, 0, 0.295);
+}
+
+.note-box-downbeat {
+    border-left: 0.15vw solid black;
+    /* border-width: 4%; */
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+#FileDrop {
+    position: relative;
+    width   : 100%;
+    height  : 100px;
+    border  : 2px dashed black;
+    color   : black;
+    margin  : 20px auto;
+}
+
+#FileDrop.Hover {
+    background-color: black;
+    color           : white;
+}
+
+#FileDrop input {
+    position: absolute;
+    width   : 100%;
+    height  : 100%;
+    opacity : 0;
+    left    : 0px;
+    top     : 0px;
+}
+
+#FileDrop #Text {
+    position   : absolute;
+    width      : 100%;
+    height     : 20px;
+    line-height: 20px;
+    left       : 0px;
+    top        : 50%;
+    transform  : translate(0, -50%);
+    text-align : center;
+}
+
+textarea {
+    font-family: monospace;
+    height     : 300px;
+    width      : 100%;
+    display    : inline-block;
+    position   : relative;
+    float      : left;
+}
+
+#Results {
+    position: relative;
+    width   : 100%;
+    margin  : 10px auto;
+}
+
+#Description {
+    position   : relative;
+    width      : 100%;
+    text-align : center;
+    height     : 40px;
+    font-size  : 16px;
+    margin     : 10px auto;
+    font-family: sans-serif;
+}
+
+tone-play-toggle {
+    margin-top: 10px;
+}

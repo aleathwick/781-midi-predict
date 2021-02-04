@@ -9,83 +9,156 @@
     <script src="https://unpkg.com/@tonejs/midi"></script>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@2.0.0/dist/tf.min.js"></script>
 
-    <!-- <link rel="stylesheet" href="Paint.css"> -->
+    <link rel="stylesheet" href="midiPredict.css">
     <!-- <script src="midiPredict.js" ></script> -->
 </head>
 
+<div id="app-container">
+    <div id="controls-container">
+        <h2 class="controls-heading">File Controls</h2>
+        <button class="control-buttons" id="input-button">
+            pick a file
+            <input type="file" id="input" class="hidden-input">
+        </button>
+        <!-- <input type="file" id="input"> -->
+        <p id='file-info'>No file selected</p>
+        <button id='outButton' class="control-buttons" disabled>
+            <a download="output.midi" id=file-out-anchor>write MIDI to file</a>
+        </button>
+    </div>
+    <div id="notes-container">
 
-<!-- get input file -->
-<input type="file" id="input">
-<p id='fInfo'>No file selected</p>
-<a download="output.midi" id=outA><button id='outButton' disabled>Write MIDI to file</button></a>
+    </div>
+</div>
+
+
+
+
 <script>
     'use strict';
     //  console.log(Object.keys(selectedFile));
 
+
     const validExtensions = ['mid', 'midi'];
 
-    const fInfo = document.getElementById('fInfo');
-    const outButton = document.getElementById('outButton');
-    const outA = document.getElementById('outA');
-    let midi;
-    // outButton.addEventListener('click', _ => fs.writeFileSync("output.mid", new Buffer(midi.toArray())));
-    // outButton.addEventListener('click', _ => console.log(midi));
+    const notesContainer = document.getElementById('notes-container');
 
+    const fileInfo = document.getElementById('file-info');
+    const outButton = document.getElementById('outButton');
+    const fileOutAnchor = document.getElementById('file-out-anchor');
+    let midi;
+
+    const DEFAULT_FILE = 'em_76_Db.mid';
     const MIDIA0 = 22;
     const SUBBEATS = 4;
+    const BEATS = 4;
+    const BARS = 4;
+
+    // set up boxes representing notes
+    let noteBoxes = [];
+    for (let i = 0; i < SUBBEATS * BEATS * BARS; i++) {
+        for (let j = 0; j < 88; j++) {
+            let noteBox = document.createElement('div');
+            noteBox.className = 'note-box';
+            if (i % (SUBBEATS * BEATS) === 0) {
+                noteBox.className += ' note-box-downbeat'
+            }
+            if (i % SUBBEATS === 0) {
+                noteBox.className += ' note-box-beat-start'
+            }
+            noteBox.style.gridColumn = i + 1;
+            noteBox.style.gridRow = 88 - j;
+            noteBoxes.push(noteBox);
+        }
+    }
+
+    // to be used with this function, note subbeats must already have been calculated
+    function modelInputsFromNotes(notes) {
+        var modelInputs = {
+            TBn: notes.map(note => { // note starts (beats)
+                return Math.floor(note.subbeat % (SUBBEATS * 4) / SUBBEATS)
+            }),
+            TSBn: notes.map(note => {  // note starts (sub-beats)
+                return note.subbeat % SUBBEATS
+            }),
+            PSn: notes.map(note => (note.midi - MIDIA0) / 88), // pitch cont.
+            PCn: notes.map(note => (note.midi - MIDIA0)) % 12 // pitch class  
+        };
+        console.log(modelInputs)
+        return modelInputs;
+    }
+
+    // reader for reading midi files
+    // calling reader.readAsArrayBuffer(selectedFile) will initate file load
+
+    function processMidi(midi) {
+        let midiTrack = midi.tracks[0];
+
+        console.log(`midi keys: ${Object.keys(midi)}`);
+        console.log(`midi track keys: ${Object.keys(midiTrack)}`);
+        console.log(`midi header keys: ${Object.keys(midi.header)}`);
+        // notes is a reference
+        let notes = midi.tracks[0].notes;
+        // tempo.bpm contains bpm
+        let bpm = midi.header.tempos[0].bpm;
+        let beatLength = 60 / bpm;
+        let subBeatLength = beatLength / SUBBEATS;
+        console.log(`beatLength: ${beatLength}`)
+        notes.forEach(note => {
+            note.subbeat = Math.round(note.time / subBeatLength);
+        });
+
+        notes.sort((a, b) => {
+            a.time - b.time
+        })
+        console.log(midi.tracks[0].notes)
+        // omit notes on a subbeat outside of the first four bars
+        // number of sub beats doesn't account for 0 indexing, so condition is not strictly less than
+        while (!(notes[notes.length - 1].subbeat < (BARS * BEATS * SUBBEATS))) {
+            notes.pop()
+        }
+
+        // update notebox colours based on midi velocity
+        notes.forEach(note => {
+            let noteBoxIndex = note.subbeat * 88 + note.midi - MIDIA0 + 1;
+            // can use opacity only
+            noteBoxes[noteBoxIndex].style.backgroundColor = `rgba(0, ${255 * (1-note.velocity)}, 0, ${0.1 + 0.9 * note.velocity})`
+
+        })
+
+
+
+        // notes are an array
+        fileInfo.innerHTML = '';
+
+        // notes.forEach(note => {
+        //     fileInfo.innerHTML += ` ${note.time} ${note.midi}<br />`;
+        //     //note.midi, note.time, note.duration, note.name
+        // })
+
+        let midiBlob = new Blob([midi.toArray()], { type: "octet/stream" })
+        const midiURL = URL.createObjectURL(midiBlob)
+        fileOutAnchor.setAttribute('href', midiURL)
+        document.getElementById('outButton').removeAttribute('disabled');
+    }
+
+
+    const reader = new FileReader();
+    reader.addEventListener('load', function () {
+        console.log('loading file')
+        // read file into new Midi object
+        midi = new Midi(reader.result);
+        processMidi(midi)
+    }, false)
+
 
     function fileReceived() {
         const selectedFile = this.files[0];
         if (validExtensions.indexOf(selectedFile.name.split('.').pop()) >= 0) {
             console.log('valid extension')
-            const reader = new FileReader();
-            reader.addEventListener('load', function () {
-                console.log('loading file')
-                // read file into new Midi object
-                midi = new Midi(reader.result);
+                ;
 
-                let midiTrack = midi.tracks[0];
-
-                console.log(`midi keys: ${Object.keys(midi)}`);
-                console.log(`midi track keys: ${Object.keys(midiTrack)}`);
-                console.log(`midi header keys: ${Object.keys(midi.header)}`);
-
-                const notes = midi.tracks[0].notes;
-                let tempo = midi.header.tempos[0];
-                let beatLength = 60 / tempo;
-                let subBeatLength = beatLength / SUBBEATS;
-                let notesSubBeats = notes.map(note => Math.round(note.time / subBeatLength));
-
-                console.log(`tempo: ${Object.keys(tempo)}`);
-
-                // notes are an array
-                fInfo.innerHTML = '';
-                var modelInputs = {
-                    TBn: notes.map(note => { // note starts (beats)
-                        let noteSubBeat = note.time / subBeatLength;
-                        return Math.floor(noteSubBeat % (SUBBEATS * 4) / SUBBEATS)
-                    }),
-                    TSBn: notes.map(note => {  // note starts (sub-beats)
-                        let noteSubBeat = note.time / subBeatLength;
-                        return Math.floor(noteSubBeat % (SUBBEATS))
-                    }),
-                    PSn: notes.map(note => (note.midi - MIDIA0) / 88), // pitch cont.
-                    PCn: notes.map(note => (note.midi - MIDIA0)) % 12 // pitch class   
-                };
-                console.log(modelInputs)
-                notes.forEach(note => {
-                    fInfo.innerHTML += ` ${note.time} ${note.midi}<br />`;
-                    //note.midi, note.time, note.duration, note.name
-                })
-
-                let midiBlob = new Blob([midi.toArray()], { type: "octet/stream" })
-                const midiURL = URL.createObjectURL(midiBlob)
-                outA.setAttribute('href', midiURL)
-                document.getElementById('outButton').removeAttribute('disabled');
-
-            }, false);
-
-            let midiBin = reader.readAsArrayBuffer(selectedFile);
+            reader.readAsArrayBuffer(selectedFile);
 
             // midiBin = reader.readAsBinaryString(selectedFile).result;
             // const midi = new Midi(midiBin);
@@ -96,5 +169,20 @@
     }
 
     const inputElement = document.getElementById("input");
+    function getInput() {
+        inputElement.click()
+    }
+
+    const inputButton = document.getElementById("input-button");
+    inputButton.addEventListener("click", getInput)
+
     inputElement.addEventListener("change", fileReceived, false);
+
+    // on document load, arrange noteboxes, and get example midi file
+    document.addEventListener('DOMContentLoaded', async function () {
+        noteBoxes.map(nb => notesContainer.appendChild(nb));
+        const midi = await Midi.fromUrl(DEFAULT_FILE);
+        processMidi(midi);
+    })
+
 </script>
