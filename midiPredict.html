@@ -7,7 +7,7 @@
 
     <!-- see https://github.com/nfroidure/midifile -->
     <script src="https://unpkg.com/@tonejs/midi"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@2.0.0/dist/tf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@2.8.5/dist/tf.min.js"></script>
 
     <link rel="stylesheet" href="midiPredict.css">
     <!-- <script src="midiPredict.js" ></script> -->
@@ -17,13 +17,16 @@
     <div id="controls-container">
         <h2 class="controls-heading">File Controls</h2>
         <button class="control-buttons" id="input-button">
-            pick a file
+            Select File
             <input type="file" id="input" class="hidden-input">
         </button>
         <!-- <input type="file" id="input"> -->
         <p id='file-info'>No file selected</p>
+        <button id='predict-button' class='control-buttons' disabled>
+            Loading Model...
+        </button>
         <button id='outButton' class="control-buttons" disabled>
-            <a download="output.midi" id=file-out-anchor>write MIDI to file</a>
+            <a download="output.midi" id=file-out-anchor>Download MIDI</a>
         </button>
     </div>
     <div id="notes-container">
@@ -31,31 +34,38 @@
     </div>
 </div>
 
-
-
-
 <script>
     'use strict';
-    //  console.log(Object.keys(selectedFile));
 
-
-    const validExtensions = ['mid', 'midi'];
-
-    const notesContainer = document.getElementById('notes-container');
-
-    const fileInfo = document.getElementById('file-info');
-    const outButton = document.getElementById('outButton');
-    const fileOutAnchor = document.getElementById('file-out-anchor');
-    let midi;
-
-    const DEFAULT_FILE = 'em_76_Db.mid';
-    const MIDIA0 = 22;
+    // constants
+    const DEFAULT_FILE = 'example.mid';
+    const MIDI_A0 = 22;
     const SUBBEATS = 4;
     const BEATS = 4;
-    const BARS = 4;
+    const BARS = 8;
+    const VALID_EXTENSIONS = ['mid', 'midi'];
+    // upper and lower limits for remapping velocity
+    const STRETCH_UPPER = 105 / 127
+    const STRETCH_LOWER = 10 / 127
+
+    // html elements
+    const notesContainer = document.getElementById('notes-container');
+    const fileInfo = document.getElementById('file-info');
+    const outButton = document.getElementById('outButton');
+    const predictButton = document.getElementById('predict-button');
+    const fileOutAnchor = document.getElementById('file-out-anchor');
+
+    let midi;
+
+    // set models loading
+    let encoder = tf.loadLayersModel('models/532_tfjs_best_val_encoder_no_seq/model.json');
+    let decoder = tf.loadLayersModel('models/532_tfjs_best_val_decoder_no_seq/model.json');
+
+    // set the number of grid columns for note boxes according to number of timesteps
+    notesContainer.style['grid-template-columns'] = `repeat(${BARS * BEATS * SUBBEATS}, 1fr)`;
 
     // set up boxes representing notes
-    let noteBoxes = [];
+    const noteBoxes = [];
     for (let i = 0; i < SUBBEATS * BEATS * BARS; i++) {
         for (let j = 0; j < 88; j++) {
             let noteBox = document.createElement('div');
@@ -72,76 +82,144 @@
         }
     }
 
-    // to be used with this function, note subbeats must already have been calculated
-    function modelInputsFromNotes(notes) {
-        var modelInputs = {
-            TBn: notes.map(note => { // note starts (beats)
-                return Math.floor(note.subbeat % (SUBBEATS * 4) / SUBBEATS)
-            }),
-            TSBn: notes.map(note => {  // note starts (sub-beats)
-                return note.subbeat % SUBBEATS
-            }),
-            PSn: notes.map(note => (note.midi - MIDIA0) / 88), // pitch cont.
-            PCn: notes.map(note => (note.midi - MIDIA0)) % 12 // pitch class  
-        };
-        console.log(modelInputs)
-        return modelInputs;
+    // get notebox colours from velocity
+    function velocityToColour(velocity) {
+        // return `rgba(0, ${255 * (1 - velocity)}, 0, ${0.1 + 0.9 * velocity})`
+        return `hsl(${velocity * 150 + 25}, 100%, 50%)`
     }
 
-    // reader for reading midi files
-    // calling reader.readAsArrayBuffer(selectedFile) will initate file load
+    //update colour of note boxes according to velocity
+    function updateNoteBoxes(notes) {
+        // reset colour of all note boxes
+        noteBoxes.forEach(noteBox => noteBox.style.backgroundColor = 'white');
+        // colour according to note velocities
+        notes.forEach(note => {
+            let noteBoxIndex = note.subbeat * 88 + note.midi - MIDI_A0 + 1;
+            // can use opacity only
+            noteBoxes[noteBoxIndex].style.backgroundColor = velocityToColour(note.velocity);
+        })
+    }
 
-    function processMidi(midi) {
-        let midiTrack = midi.tracks[0];
+    // remap velocity so that it covers more of the available range (model outputs are a bit too narrow)
+    function remapVelocity(velocity) {
+        return Math.min(Math.max((velocity - STRETCH_LOWER) / (STRETCH_UPPER - STRETCH_LOWER), 0), 1)
+    }
 
-        console.log(`midi keys: ${Object.keys(midi)}`);
-        console.log(`midi track keys: ${Object.keys(midiTrack)}`);
-        console.log(`midi header keys: ${Object.keys(midi.header)}`);
-        // notes is a reference
-        let notes = midi.tracks[0].notes;
-        // tempo.bpm contains bpm
-        let bpm = midi.header.tempos[0].bpm;
-        let beatLength = 60 / bpm;
-        let subBeatLength = beatLength / SUBBEATS;
-        console.log(`beatLength: ${beatLength}`)
+    // quantize and sort notes
+    function preprocessNotes(notes, subBeatLength) {
+        // add property with quantized version of note starts
         notes.forEach(note => {
             note.subbeat = Math.round(note.time / subBeatLength);
         });
-
+        // sort notes by note start time
         notes.sort((a, b) => {
             a.time - b.time
         })
-        console.log(midi.tracks[0].notes)
-        // omit notes on a subbeat outside of the first four bars
+    }
+
+    // get required variables for predicting velocity
+    function modelInputsFromNotes(notes) {
+        // tensorflowjs docs SAYS that a dictionary of named inputs can be passed in... but problems include:
+        // -- ordinary dictionary structure doesn't work
+        // -- [{input1: data}, {input2: data}] is recognized as tensors, but doesn't seem to work later on
+        const inputShape = [1, notes.length, 1]
+        let modelInputs = {
+            'TBn_in': tf.reshape(tf.oneHot(notes.map(note => { // note starts (beats), BEATS bit vectors
+                return Math.floor(note.subbeat % (SUBBEATS * 4) / SUBBEATS)
+            }), BEATS), [1, notes.length, SUBBEATS]),
+            'TSBn_in': tf.reshape(tf.oneHot(notes.map(note => {  // note starts (sub-beats), SUBBEATS bit vectors
+                return note.subbeat % SUBBEATS
+            }), SUBBEATS), [1, notes.length, SUBBEATS]),
+            'PSn_in': tf.tensor(notes.map(note => (note.midi - MIDI_A0) / 88), inputShape), // pitch cont., scalar
+            'PCn_in': tf.reshape(tf.oneHot(notes.map(note => (note.midi - MIDI_A0) % 12), 12), [1, notes.length, 12]) // pitch class., 12 bit vectors
+        };
+        return modelInputs;
+    }
+
+    // predict note velocity in place, and set associate midi file with download button
+    function predictVelocity(encoder, decoder, midi) {
+        const notes = midi.tracks[0].notes;
+        const modelInputs = modelInputsFromNotes(notes)
+        console.log(encoder.summary());
+        let modelInputsFormatted = encoder.inputs.map(input => modelInputs[input.name]);
+        let encoded = encoder.predict(modelInputsFormatted, { batchSize: 1 });
+        let vnOut = tf.zeros([1, 1, 1]);
+        let predPromises = [];
+        for (let i = 0; i < encoded.shape[1]; i++) {
+            let stepInput = { encoded: encoded.slice([0, i, 0], [1, 1, encoded.shape.slice(-1)[0]]), Vn_ar: vnOut };
+            let stepInputFormatted = decoder.inputs.map(input => stepInput[input.name])
+            vnOut = decoder.predict(stepInputFormatted, { batchSize: 1 });
+            // tensor.array() turns a tensor into an array, returning a promise
+            predPromises.push(vnOut.flatten().array())
+        }
+        // when all the prediction promises are fulfilled, update note velocities and note display
+        Promise.all(predPromises)
+            .then(pred => {
+                console.log(pred)
+                notes.forEach((note, i) => note.velocity = remapVelocity(pred[i][0]))
+                updateNoteBoxes(notes)
+                prepareDownload(midi)
+            })
+
+    }
+
+    // attach midi file for download to the download button
+    function prepareDownload(midi) {
+        let midiBlob = new Blob([midi.toArray()], { type: "octet/stream" })
+        const midiURL = URL.createObjectURL(midiBlob)
+        fileOutAnchor.setAttribute('href', midiURL)
+        outButton.removeAttribute('disabled');
+    }
+
+    /* 
+    processMidi:
+    -preprocesses notes (quantizing, ordering)
+    -updates noteboxes (visuals)
+    -enables predict button
+    */
+    function processMidi(midi) {
+        console.log(`midi file keys: ${Object.keys(midi)}`);
+        console.log(`midi track keys: ${Object.keys(midi.tracks[0])}`);
+        console.log(`midi header keys: ${Object.keys(midi.header)}`);
+        // assume that the first track is what we're looking for
+        const notes = midi.tracks[0].notes;
+        // notes.forEach(note => note.velocity = 0.5)
+        // assume that there is only one tempo
+        const bpm = midi.header.tempos[0].bpm;
+        //beat length in seconds
+        const beatLength = 60 / bpm;
+        const subBeatLength = beatLength / SUBBEATS;
+        console.log(`beatLength: ${beatLength}`)
+
+        // quantize and sort notes
+        preprocessNotes(notes, subBeatLength)
+
+        // omit notes on a subbeat outside of the first BARS bars
         // number of sub beats doesn't account for 0 indexing, so condition is not strictly less than
         while (!(notes[notes.length - 1].subbeat < (BARS * BEATS * SUBBEATS))) {
             notes.pop()
         }
 
         // update notebox colours based on midi velocity
-        notes.forEach(note => {
-            let noteBoxIndex = note.subbeat * 88 + note.midi - MIDIA0 + 1;
-            // can use opacity only
-            noteBoxes[noteBoxIndex].style.backgroundColor = `rgba(0, ${255 * (1-note.velocity)}, 0, ${0.1 + 0.9 * note.velocity})`
+        updateNoteBoxes(notes)
 
-        })
+        // when the encoder and decoder have finished loading, set up the predict button
+        Promise.all([encoder, decoder])
+            .then(models => {
+                predictButton.removeAttribute('disabled')
+                predictButton.innerHTML = 'Predict'
+                encoder = models[0]
+                decoder = models[1]
+                predictButton.addEventListener('click', function () { predictVelocity(encoder, decoder, midi) })
+            })
+            .catch(function (err) {
+                predictButton.innerHTML = 'model failed to load'
+                console.log(err.message)
+            })
+        
+        prepareDownload(midi)
 
-
-
-        // notes are an array
-        fileInfo.innerHTML = '';
-
-        // notes.forEach(note => {
-        //     fileInfo.innerHTML += ` ${note.time} ${note.midi}<br />`;
-        //     //note.midi, note.time, note.duration, note.name
-        // })
-
-        let midiBlob = new Blob([midi.toArray()], { type: "octet/stream" })
-        const midiURL = URL.createObjectURL(midiBlob)
-        fileOutAnchor.setAttribute('href', midiURL)
-        document.getElementById('outButton').removeAttribute('disabled');
     }
-
 
     const reader = new FileReader();
     reader.addEventListener('load', function () {
@@ -151,20 +229,13 @@
         processMidi(midi)
     }, false)
 
-
     function fileReceived() {
         const selectedFile = this.files[0];
-        if (validExtensions.indexOf(selectedFile.name.split('.').pop()) >= 0) {
-            console.log('valid extension')
-                ;
-
+        if (VALID_EXTENSIONS.indexOf(selectedFile.name.split('.').pop()) >= 0) {
+            fileInfo.innerHTML = `Selected file: ${selectedFile.name}`
             reader.readAsArrayBuffer(selectedFile);
-
-            // midiBin = reader.readAsBinaryString(selectedFile).result;
-            // const midi = new Midi(midiBin);
-
         } else {
-            alert(`The file extension ${selectedFile.name.split('.').pop()} is invalid, must be in ${validExtensions}`);
+            alert(`The file extension ${selectedFile.name.split('.').pop()} is invalid, must be in ${VALID_EXTENSIONS}`);
         }
     }
 
@@ -181,6 +252,7 @@
     // on document load, arrange noteboxes, and get example midi file
     document.addEventListener('DOMContentLoaded', async function () {
         noteBoxes.map(nb => notesContainer.appendChild(nb));
+        fileInfo.innerHTML = `Selected file: ${DEFAULT_FILE}`
         const midi = await Midi.fromUrl(DEFAULT_FILE);
         processMidi(midi);
     })

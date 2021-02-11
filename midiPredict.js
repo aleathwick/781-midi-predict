@@ -11,6 +11,9 @@ function fileReceived() {
         midiBin = reader.readAsBinaryString(selectedFile);
         const midi = new Midi(midiBin);
 
+        // take the first track
+        midiTrack = midi.tracks[0];
+        console.log(`midi track keys: ${Object.keys(midiTrack)}`);
         midi.tracks.forEach(track => {
             //tracks have notes and controlChanges
           
