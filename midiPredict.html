@@ -30,7 +30,6 @@
         </button>
     </div>
     <div id="notes-container">
-
     </div>
 </div>
 
@@ -216,40 +215,42 @@
                 predictButton.innerHTML = 'model failed to load'
                 console.log(err.message)
             })
-        
         prepareDownload(midi)
-
     }
 
     const reader = new FileReader();
     reader.addEventListener('load', function () {
-        console.log('loading file')
         // read file into new Midi object
         midi = new Midi(reader.result);
-        processMidi(midi)
+        processMidi(midi);
     }, false)
 
+    // for handling file selection event
     function fileReceived() {
         const selectedFile = this.files[0];
         if (VALID_EXTENSIONS.indexOf(selectedFile.name.split('.').pop()) >= 0) {
             fileInfo.innerHTML = `Selected file: ${selectedFile.name}`
+            // when the file has been read in, it will trigger the on load reader event
             reader.readAsArrayBuffer(selectedFile);
         } else {
             alert(`The file extension ${selectedFile.name.split('.').pop()} is invalid, must be in ${VALID_EXTENSIONS}`);
         }
     }
 
+    // set up a function to trigger the input element
     const inputElement = document.getElementById("input");
     function getInput() {
-        inputElement.click()
+        inputElement.click();
     }
 
+    // attach that function to the input button (having button as parent of input element is completely unnecessary)
     const inputButton = document.getElementById("input-button");
-    inputButton.addEventListener("click", getInput)
+    inputButton.addEventListener("click", getInput);
 
+    // handle file selection event
     inputElement.addEventListener("change", fileReceived, false);
 
-    // on document load, arrange noteboxes, and get example midi file
+    // on document load, arrange noteboxes, and load the example midi file
     document.addEventListener('DOMContentLoaded', async function () {
         noteBoxes.map(nb => notesContainer.appendChild(nb));
         fileInfo.innerHTML = `Selected file: ${DEFAULT_FILE}`
